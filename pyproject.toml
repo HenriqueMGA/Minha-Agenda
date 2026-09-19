@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [{include = "saudeagenda", from = "src"}]
+package-mode = false
 
 [tool.poe.tasks]
 run = "python main.py"
