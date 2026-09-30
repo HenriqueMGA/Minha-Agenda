@@ -1,19 +1,19 @@
 
 from fastapi import APIRouter, Depends, HTTPException
-from src.auth import require_roles, require_self_or_roles
+from src.auth import get_current_user, require_roles, require_self_or_roles
 from src.models.users import UserCreate, UserResponse, UserUpdate
 from src.services.users import create_user, del_user, list_users, modify_user, search_user
 
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-@router.get("/list", response_model=list[UserResponse])
+@router.get("/list", response_model=list[UserResponse], dependencies=[Depends(get_current_user)])
 def get_users():
 
     result = list_users()
     return result
 
-@router.get("/search", response_model=list[UserResponse])
+@router.get("/search", response_model=list[UserResponse], dependencies=[Depends(get_current_user)])
 def get_user(name: str | None = None, email: str | None = None, username: str | None = None, type: str | None = None):
 
     result = search_user(name=name, email=email, username=username, type=type)

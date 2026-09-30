@@ -7,13 +7,13 @@ from src.services.pacientes import create_patient, del_patient, list_patients, m
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
-@router.get("/list", response_model=list[PatientResponse])
+@router.get("/list", response_model=list[PatientResponse], dependencies=[Depends(get_current_user)])
 def get_patients():
 
     result = list_patients()
     return result
 
-@router.get("/search", response_model=list[PatientResponse])
+@router.get("/search", response_model=list[PatientResponse], dependencies=[Depends(get_current_user)])
 def get_patient(name: str | None = None, email: str | None = None, cpf: str | None = None):
 
     result = search_patient(name=name, email=email, cpf=cpf)

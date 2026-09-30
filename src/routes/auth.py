@@ -8,6 +8,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Login para obter o token de acesso.
+
+    **Atenção**: apesar do campo se chamar "username" (nome padrão do
+    fluxo OAuth2), digite aqui o seu **email** de cadastro, não um
+    nome de usuário.
+    """
     user = authenticate_user(form_data.username, form_data.password)
     if user is None:
         raise HTTPException(

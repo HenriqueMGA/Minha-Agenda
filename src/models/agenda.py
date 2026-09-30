@@ -32,7 +32,7 @@ class AppointmentUpdate(BaseModel):
 
 
 class AppointmentResponse(BaseModel):
-    id: int
+    id: str
     patient_name: str
     patient_cpf: str
     doctor_name: str

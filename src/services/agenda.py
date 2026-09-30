@@ -30,7 +30,7 @@ def create_appointments_table():
 
 def _to_response(row):
     return AppointmentResponse(
-        id=row[0],
+        id=str(row[0]).zfill(5),
         patient_name=row[1],
         patient_cpf=row[2],
         doctor_name=row[3],
@@ -189,7 +189,7 @@ def modify_appointment(id: int, body):
 
         conflito = [
             c for c in search_appointment(doctor_name=novo_doctor, date=novo_date, time=novo_time)
-            if c.id != id
+            if int(c.id) != id
         ]
         if conflito:
             raise HTTPException(
