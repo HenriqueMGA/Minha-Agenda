@@ -19,3 +19,8 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+*.txt
+# PHP
+php_notifications/vendor/
+php_notifications/.env

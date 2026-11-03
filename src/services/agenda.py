@@ -1,3 +1,4 @@
+import secrets
 from datetime import date, time
 
 from fastapi import HTTPException
@@ -5,6 +6,10 @@ from psycopg2.errors import UniqueViolation
 
 from src.db.db_conection import get_connection
 from src.models.agenda import AppointmentResponse
+
+_COLUMNS = (
+    "id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time, is_checked"
+)
 
 
 def create_appointments_table():
@@ -21,6 +26,8 @@ def create_appointments_table():
                     doctor_name VARCHAR(255) NOT NULL,
                     appointment_date DATE NOT NULL,
                     appointment_time TIME NOT NULL,
+                    is_checked BOOLEAN NOT NULL DEFAULT FALSE,
+                    confirmation_token VARCHAR(64) NOT NULL,
                     UNIQUE (doctor_name, appointment_date, appointment_time)
                 );
             """
@@ -36,16 +43,27 @@ def _to_response(row):
         doctor_name=row[3],
         date=row[4],
         time=row[5],
+        is_checked=row[6],
     )
+
+
+def get_confirmation_token(id: int) -> str | None:
+    """Uso interno: nunca exponha via rota pública além do fluxo de confirmação."""
+    with get_connection() as conexao:
+        cursor = conexao.cursor()
+        cursor.execute(
+            "SELECT confirmation_token FROM minhaagenda.appointments WHERE id = %(id)s",
+            {"id": id},
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        return row[0] if row else None
 
 
 def list_appointments():
     with get_connection() as conexao:
         cursor = conexao.cursor()
-        cursor.execute(
-            "SELECT id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time "
-            "FROM minhaagenda.appointments"
-        )
+        cursor.execute(f"SELECT {_COLUMNS} FROM minhaagenda.appointments")
         dados = cursor.fetchall()
         cursor.close()
         return [_to_response(row) for row in dados]
@@ -82,8 +100,7 @@ def search_appointment(
     with get_connection() as conexao:
         cursor = conexao.cursor()
         cursor.execute(
-            f"SELECT id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time "
-            f"FROM minhaagenda.appointments WHERE {where}",
+            f"SELECT {_COLUMNS} FROM minhaagenda.appointments WHERE {where}",
             params,
         )
         dados = cursor.fetchall()
@@ -106,16 +123,19 @@ def create_appointment(body):
         "doctor_name": body.doctor_name,
         "date": body.date,
         "time": body.time,
+        "confirmation_token": secrets.token_urlsafe(32),
     }
 
     try:
         with get_connection() as conexao:
             cursor = conexao.cursor()
             cursor.execute(
-                """
-                    INSERT INTO minhaagenda.appointments (patient_name, patient_cpf, doctor_name, appointment_date, appointment_time)
-                    VALUES (%(patient_name)s, %(patient_cpf)s, %(doctor_name)s, %(date)s, %(time)s)
-                    RETURNING id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time
+                f"""
+                    INSERT INTO minhaagenda.appointments
+                        (patient_name, patient_cpf, doctor_name, appointment_date, appointment_time, confirmation_token)
+                    VALUES
+                        (%(patient_name)s, %(patient_cpf)s, %(doctor_name)s, %(date)s, %(time)s, %(confirmation_token)s)
+                    RETURNING {_COLUMNS}
                 """,
                 params,
             )
@@ -139,8 +159,7 @@ def del_appointment(id: int):
     with get_connection() as conexao:
         cursor = conexao.cursor()
         cursor.execute(
-            "DELETE FROM minhaagenda.appointments WHERE id = %(id)s "
-            "RETURNING id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time",
+            f"DELETE FROM minhaagenda.appointments WHERE id = %(id)s RETURNING {_COLUMNS}",
             {"id": id},
         )
         row = cursor.fetchone()
@@ -204,7 +223,7 @@ def modify_appointment(id: int, body):
             cursor = conexao.cursor()
             cursor.execute(
                 f"UPDATE minhaagenda.appointments SET {set_clause} WHERE id = %(id)s "
-                f"RETURNING id, patient_name, patient_cpf, doctor_name, appointment_date, appointment_time",
+                f"RETURNING {_COLUMNS}",
                 params,
             )
             row = cursor.fetchone()
@@ -214,6 +233,45 @@ def modify_appointment(id: int, body):
             status_code=409,
             detail="Já existe uma consulta marcada para esse profissional nessa data e horário",
         )
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agendamento não encontrado")
+
+    return _to_response(row)
+
+
+def confirm_appointment(id: int, token: str):
+
+    with get_connection() as conexao:
+        cursor = conexao.cursor()
+        cursor.execute(
+            f"UPDATE minhaagenda.appointments SET is_checked = TRUE "
+            f"WHERE id = %(id)s AND confirmation_token = %(token)s "
+            f"RETURNING {_COLUMNS}",
+            {"id": id, "token": token},
+        )
+        row = cursor.fetchone()
+        cursor.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Link de confirmação inválido ou expirado")
+
+    return _to_response(row)
+
+
+def set_appointment_checked(id: int, is_checked: bool):
+    """Usado pelo recepcionista quando o paciente responde à mensagem."""
+
+    with get_connection() as conexao:
+        cursor = conexao.cursor()
+        cursor.execute(
+            f"UPDATE minhaagenda.appointments SET is_checked = %(is_checked)s "
+            f"WHERE id = %(id)s "
+            f"RETURNING {_COLUMNS}",
+            {"id": id, "is_checked": is_checked},
+        )
+        row = cursor.fetchone()
+        cursor.close()
 
     if row is None:
         raise HTTPException(status_code=404, detail="Agendamento não encontrado")

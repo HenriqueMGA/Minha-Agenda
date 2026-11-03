@@ -38,3 +38,4 @@ class AppointmentResponse(BaseModel):
     doctor_name: str
     date: Date
     time: Time
+    is_checked: bool
