@@ -28,6 +28,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://minha-agenda-frontend-eight.vercel.app",
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
