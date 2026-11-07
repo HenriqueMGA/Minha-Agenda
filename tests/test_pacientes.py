@@ -81,3 +81,15 @@ def test_delete_patient(client, regular_user, valid_cpf):
 def test_delete_nonexistent_patient(client, regular_user, valid_cpf):
     r = client.delete("/patients/delete", headers=regular_user["headers"], params={"cpf": valid_cpf()})
     assert r.status_code == 404
+
+
+def test_patient_has_id(client, regular_user, valid_cpf):
+    cpf = valid_cpf()
+    client.post("/patients/create", headers=regular_user["headers"], json={
+        "name": "P", "cpf": cpf, "email": "p@example.com", "tel": "119", "dt_nasc": "1990-01-01",
+    })
+
+    patient = client.get("/patients/search", headers=regular_user["headers"], params={"cpf": cpf}).json()[0]
+    assert patient["id"].isdigit() and len(patient["id"]) >= 5
+
+    del_patient(cpf)

@@ -5,7 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.app import app
+from src.models.medicos import DoctorCreate
 from src.models.users import UserCreate
+from src.services.agenda import del_appointment, search_appointment
+from src.services.medicos import create_doctor, del_doctor
 from src.services.users import create_user, del_user
 
 
@@ -82,6 +85,35 @@ def make_user(client, unique_email, unique_username):
     for email in created:
         try:
             del_user(email)
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def make_doctor(valid_cpf):
+    """Factory: cadastra um médico (direto pela camada de serviço) e devolve o CPF.
+    No fim do teste remove o médico e os agendamentos dele."""
+    created = []
+
+    def _make(name="Dr Teste", status="ativo"):
+        cpf = valid_cpf()
+        create_doctor(DoctorCreate(
+            name=name, cpf=cpf, email="dr@example.com", tel="11999990000",
+            doctor_specialty="Clinico", registration="CRM 12345", status=status,
+        ))
+        created.append(cpf)
+        return cpf
+
+    yield _make
+
+    for cpf in created:
+        for appointment in search_appointment(doctor_cpf=cpf):
+            try:
+                del_appointment(int(appointment.id))
+            except Exception:
+                pass
+        try:
+            del_doctor(cpf)
         except Exception:
             pass
 

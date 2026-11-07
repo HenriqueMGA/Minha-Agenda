@@ -4,6 +4,8 @@ from psycopg2.errors import UniqueViolation
 from src.db.db_conection import get_connection
 from src.models.medicos import DoctorResponse
 
+_COLUMNS = "id, cpf, nome, email, tel, doctor_specialty, registration, status"
+
 
 def create_doctors_table():
     with get_connection() as conexao:
@@ -13,30 +15,48 @@ def create_doctors_table():
                 CREATE SCHEMA IF NOT EXISTS minhaagenda;
 
                 CREATE TABLE IF NOT EXISTS minhaagenda.doctors (
+                    id SERIAL UNIQUE,
                     cpf VARCHAR(11) PRIMARY KEY,
                     nome VARCHAR(255) NOT NULL,
                     email VARCHAR(255) NOT NULL,
                     tel VARCHAR(20) NOT NULL,
-                    doctor_specialty VARCHAR(100) NOT NULL
+                    doctor_specialty VARCHAR(100) NOT NULL,
+                    registration VARCHAR(30),
+                    status VARCHAR(20) NOT NULL DEFAULT 'ativo'
                 );
+
+                -- Migração de tabelas criadas antes desses campos existirem
+                ALTER TABLE minhaagenda.doctors ADD COLUMN IF NOT EXISTS id SERIAL UNIQUE;
+                ALTER TABLE minhaagenda.doctors ADD COLUMN IF NOT EXISTS registration VARCHAR(30);
+                ALTER TABLE minhaagenda.doctors ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ativo';
             """
         )
         cursor.close()
 
 
+def _to_response(row):
+    return DoctorResponse(
+        id=str(row[0]).zfill(5),
+        cpf=row[1],
+        name=row[2],
+        email=row[3],
+        tel=row[4],
+        doctor_specialty=row[5],
+        registration=row[6],
+        status=row[7],
+    )
+
+
 def list_doctors():
     with get_connection() as conexao:
         cursor = conexao.cursor()
-        cursor.execute('SELECT cpf, nome, email, tel, doctor_specialty FROM minhaagenda.doctors')
+        cursor.execute(f"SELECT {_COLUMNS} FROM minhaagenda.doctors ORDER BY id")
         dados = cursor.fetchall()
         cursor.close()
-        return [
-            DoctorResponse(cpf=row[0], name=row[1], email=row[2], tel=row[3], doctor_specialty=row[4])
-            for row in dados
-        ]
+        return [_to_response(row) for row in dados]
 
 
-def search_doctor(name: str | None = None, email: str | None = None, cpf: str | None = None):
+def search_doctor(name: str | None = None, email: str | None = None, cpf: str | None = None, status: str | None = None):
     filtros = []
     params = {}
 
@@ -49,18 +69,18 @@ def search_doctor(name: str | None = None, email: str | None = None, cpf: str | 
     if cpf is not None:
         filtros.append("cpf = %(cpf)s")
         params["cpf"] = cpf
+    if status is not None:
+        filtros.append("status = %(status)s")
+        params["status"] = status
 
     where = " AND ".join(filtros) if filtros else "TRUE"
 
     with get_connection() as conexao:
         cursor = conexao.cursor()
-        cursor.execute(f"SELECT cpf, nome, email, tel, doctor_specialty FROM minhaagenda.doctors WHERE {where}", params)
+        cursor.execute(f"SELECT {_COLUMNS} FROM minhaagenda.doctors WHERE {where} ORDER BY id", params)
         dados = cursor.fetchall()
         cursor.close()
-        return [
-            DoctorResponse(cpf=row[0], name=row[1], email=row[2], tel=row[3], doctor_specialty=row[4])
-            for row in dados
-        ]
+        return [_to_response(row) for row in dados]
 
 
 def create_doctor(body):
@@ -75,6 +95,8 @@ def create_doctor(body):
         "tel": body.tel,
         "email": body.email,
         "doctor_specialty": body.doctor_specialty,
+        "registration": body.registration,
+        "status": body.status,
     }
 
     try:
@@ -82,8 +104,8 @@ def create_doctor(body):
             cursor = conexao.cursor()
             cursor.execute(
                 """
-                    INSERT INTO minhaagenda.doctors (nome, cpf, tel, email, doctor_specialty)
-                    VALUES (%(name)s, %(cpf)s, %(tel)s, %(email)s, %(doctor_specialty)s)
+                    INSERT INTO minhaagenda.doctors (nome, cpf, tel, email, doctor_specialty, registration, status)
+                    VALUES (%(name)s, %(cpf)s, %(tel)s, %(email)s, %(doctor_specialty)s, %(registration)s, %(status)s)
                     RETURNING cpf
                 """,
                 params,
@@ -138,7 +160,14 @@ def modify_doctor(cpf: str, body):
     if body.doctor_specialty is not None:
         campos.append("doctor_specialty = %(doctor_specialty)s")
         params["doctor_specialty"] = body.doctor_specialty
-    if body.cpf is not None and body.cpf != cpf:
+    if body.registration is not None:
+        campos.append("registration = %(registration)s")
+        params["registration"] = body.registration
+    if body.status is not None:
+        campos.append("status = %(status)s")
+        params["status"] = body.status
+    cpf_mudou = body.cpf is not None and body.cpf != cpf
+    if cpf_mudou:
         if search_doctor(cpf=body.cpf):
             raise HTTPException(status_code=409, detail="CPF já está em uso")
         campos.append("cpf = %(new_cpf)s")
@@ -157,6 +186,12 @@ def modify_doctor(cpf: str, body):
                 params,
             )
             row = cursor.fetchone()
+            # Os agendamentos guardam o CPF do médico, então acompanham a troca
+            if row is not None and cpf_mudou:
+                cursor.execute(
+                    "UPDATE minhaagenda.appointments SET doctor_cpf = %(new_cpf)s WHERE doctor_cpf = %(current_cpf)s",
+                    params,
+                )
             cursor.close()
     except UniqueViolation:
         raise HTTPException(status_code=409, detail="CPF já está em uso")

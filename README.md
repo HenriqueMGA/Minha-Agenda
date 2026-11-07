@@ -2,7 +2,8 @@
 
 API em FastAPI para agendamento de consultas: usuários do sistema, pacientes, médicos e agendamentos, com confirmação de presença por WhatsApp ou email.
 
-- **Produção:** <https://minha-agenda-znvl.onrender.com>
+- **Produção (Vercel):** <https://minha-agenda-flax-tau.vercel.app>
+- **Front em produção:** <https://minha-agenda-frontend-eight.vercel.app>
 - **Local:** <http://localhost:8000>
 - **Documentação interativa (Swagger):** `/docs` — dá para testar todas as rotas pelo navegador.
 
@@ -35,10 +36,14 @@ Variáveis de ambiente (arquivo `.env` na raiz):
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | Conexão com o PostgreSQL |
 | `SECRET_KEY` | Chave usada para assinar os tokens JWT |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Validade do token de login (padrão: `60`) |
-| `APP_BASE_URL` | Endereço público da API, usado para montar o link de confirmação enviado ao paciente |
-| `PORT` | Porta do servidor (padrão: `8000`; o Render define sozinho) |
+| `APP_BASE_URL` | Endereço público da API, usado para montar o link de confirmação enviado ao paciente. Em produção: `https://minha-agenda-flax-tau.vercel.app` (sem `/` no final) |
+| `PORT` | Porta do servidor quando roda com `poe run` (padrão: `8000`) |
 
-As tabelas são criadas automaticamente quando a API sobe.
+Na Vercel, o `.env` não é enviado: cadastre essas variáveis em **Settings → Environment Variables** do projeto da API e faça um **Redeploy**. Se o `APP_BASE_URL` estiver faltando ou apontando para outro endereço, o link de confirmação que vai para o paciente sai errado.
+
+As tabelas são criadas automaticamente quando a API sobe, e as colunas novas são adicionadas às tabelas que já existiam, sem apagar dados.
+
+**CORS:** a API aceita o front em produção, `localhost`/`127.0.0.1` em qualquer porta (Vite, Live Server etc.) e páginas abertas direto do arquivo (`file://`). Outro domínio precisa ser adicionado em `allow_origins` no `src/app.py`.
 
 ---
 
@@ -265,6 +270,7 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 ```json
 [
   {
+    "id": "00001",
     "cpf": "12345678909",
     "name": "Maria Silva",
     "email": "maria@example.com",
@@ -273,6 +279,8 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
   }
 ]
 ```
+
+`id` é gerado pela API, sempre com pelo menos 5 dígitos. As rotas de atualizar e excluir continuam usando o `cpf`.
 
 ### `GET /patients/search` — Buscar pacientes
 
@@ -378,14 +386,23 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 ```json
 [
   {
+    "id": "00001",
     "cpf": "98765432100",
     "name": "Dr. João Souza",
     "email": "joao@clinica.com",
     "tel": "(11) 3333-4444",
-    "doctor_specialty": "Cardiologia"
+    "doctor_specialty": "Cardiologia",
+    "registration": "CRM-SP 123456",
+    "status": "ativo"
   }
 ]
 ```
+
+| Campo | Descrição |
+|---|---|
+| `id` | Gerado pela API, sempre com pelo menos 5 dígitos. As rotas de atualizar e excluir continuam usando o `cpf` |
+| `registration` | Registro no conselho (CRM, CRO...). Pode ser `null` |
+| `status` | `ativo`, `ferias` ou `inativo` |
 
 ### `GET /doctors/search` — Buscar médicos
 
@@ -401,6 +418,7 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 | `name` | texto | Nome (busca exata) |
 | `email` | texto | Email (busca exata) |
 | `cpf` | texto | CPF |
+| `status` | texto | `ativo`, `ferias` ou `inativo` |
 
 **Saída `200`:** lista no mesmo formato de `/doctors/list`.
 
@@ -411,7 +429,7 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 | **URL** | `/doctors/create` |
 | **Acesso** | 🔑 admin/dev |
 
-**Entrada (JSON), todos obrigatórios:**
+**Entrada (JSON):**
 
 ```json
 {
@@ -419,9 +437,13 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
   "cpf": "98765432100",
   "email": "joao@clinica.com",
   "tel": "(11) 3333-4444",
-  "doctor_specialty": "Cardiologia"
+  "doctor_specialty": "Cardiologia",
+  "registration": "CRM-SP 123456",
+  "status": "ativo"
 }
 ```
+
+`registration` e `status` são opcionais (o padrão de `status` é `ativo`); os outros campos são obrigatórios.
 
 **Saída `200`:**
 
@@ -429,7 +451,7 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 { "cpf": "98765432100" }
 ```
 
-**Erros:** `403` sem permissão · `409` CPF já está em uso · `422` CPF inválido.
+**Erros:** `403` sem permissão · `409` CPF já está em uso · `422` CPF ou status inválido.
 
 ### `PUT /doctors/update` — Atualizar médico
 
@@ -441,11 +463,13 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 **Entrada:**
 
 - Query string: `cpf` — CPF atual do médico.
-- Corpo (JSON), só os campos que mudam: `name`, `email`, `tel`, `doctor_specialty`, `cpf`.
+- Corpo (JSON), só os campos que mudam: `name`, `email`, `tel`, `doctor_specialty`, `cpf`, `registration`, `status`.
 
 ```json
-{ "doctor_specialty": "Clínico Geral" }
+{ "status": "ferias" }
 ```
+
+Os agendamentos ficam ligados ao médico pelo CPF. Por isso, renomear o médico já muda o nome mostrado nos agendamentos dele, e trocar o CPF leva os agendamentos junto.
 
 **Saída `200`:**
 
@@ -453,7 +477,7 @@ O telefone e o email cadastrados aqui são usados para montar as mensagens de co
 { "cpf": "98765432100" }
 ```
 
-**Erros:** `400` nenhum campo enviado · `403` sem permissão · `404` médico não encontrado · `409` novo CPF já está em uso · `422` CPF inválido.
+**Erros:** `400` nenhum campo enviado · `403` sem permissão · `404` médico não encontrado · `409` novo CPF já está em uso · `422` CPF ou status inválido.
 
 ### `DELETE /doctors/delete` — Excluir médico
 
@@ -483,9 +507,12 @@ Todas as rotas de agendamento devolvem o agendamento no formato abaixo (as rotas
   "id": "00073",
   "patient_name": "Maria Silva",
   "patient_cpf": "12345678909",
+  "doctor_cpf": "98765432100",
   "doctor_name": "Dr. João Souza",
   "date": "2026-11-10",
   "time": "14:00:00",
+  "status": "pendente",
+  "reason": null,
   "is_checked": false
 }
 ```
@@ -493,7 +520,13 @@ Todas as rotas de agendamento devolvem o agendamento no formato abaixo (as rotas
 | Campo | Descrição |
 |---|---|
 | `id` | Número do agendamento, sempre com pelo menos 5 dígitos (`"00073"`). Nas rotas que recebem `id`, tanto `73` quanto `00073` funcionam |
-| `is_checked` | `true` quando o paciente confirmou presença |
+| `doctor_cpf` | CPF do médico. É ele que liga o agendamento ao cadastro do médico |
+| `doctor_name` | Nome atual do médico, vindo do cadastro (acompanha uma renomeação) |
+| `status` | `pendente`, `confirmado`, `concluido`, `ausente` ou `cancelado` |
+| `reason` | Motivo da ausência ou do cancelamento. É `null` nos outros status |
+| `is_checked` | Mantido para compatibilidade: `true` quando `status` é `confirmado` |
+
+Consultas com status `cancelado` liberam o horário: dá para marcar outra consulta com o mesmo médico, na mesma data e hora.
 
 ### `GET /appointments/list` — Listar agendamentos
 
@@ -509,7 +542,7 @@ Todas as rotas de agendamento devolvem o agendamento no formato abaixo (as rotas
 
 | | |
 |---|---|
-| **URL** | `/appointments/search?doctor_name=Dr. João Souza&date=2026-11-10` |
+| **URL** | `/appointments/search?doctor_cpf=98765432100&date=2026-11-10` |
 | **Acesso** | 🔒 Logado |
 
 **Entrada (query string, todos opcionais — combinados com "E"):**
@@ -517,7 +550,9 @@ Todas as rotas de agendamento devolvem o agendamento no formato abaixo (as rotas
 | Parâmetro | Tipo | Descrição |
 |---|---|---|
 | `patient_cpf` | texto | CPF do paciente |
-| `doctor_name` | texto | Nome do médico (busca exata) |
+| `doctor_cpf` | texto | CPF do médico |
+| `doctor_name` | texto | Nome atual do médico (busca exata) |
+| `status` | texto | `pendente`, `confirmado`, `concluido`, `ausente` ou `cancelado` |
 | `date` | data | `AAAA-MM-DD` |
 | `time` | horário | `HH:MM:SS` |
 
@@ -536,17 +571,19 @@ Todas as rotas de agendamento devolvem o agendamento no formato abaixo (as rotas
 {
   "patient_name": "Maria Silva",
   "patient_cpf": "12345678909",
-  "doctor_name": "Dr. João Souza",
+  "doctor_cpf": "98765432100",
   "date": "2026-11-10",
   "time": "14:00:00"
 }
 ```
 
+O médico precisa estar cadastrado em `/doctors`. No lugar de `doctor_cpf` ainda dá para mandar `doctor_name` (o front antigo faz isso): a API procura o médico pelo nome e guarda o CPF dele.
+
 Para conseguir enviar a mensagem de confirmação depois, o paciente com esse CPF precisa estar cadastrado em `/patients`.
 
-**Saída `200`:** o agendamento criado, com `is_checked: false`.
+**Saída `200`:** o agendamento criado, com `status: "pendente"`.
 
-**Erros:** `409` o médico já tem consulta nessa data e horário · `422` CPF inválido.
+**Erros:** `404` médico não encontrado · `409` o médico já tem consulta nessa data e horário, ou há mais de um médico com o nome enviado · `422` CPF inválido ou médico não informado.
 
 ### `PUT /appointments/update` — Atualizar agendamento
 
@@ -558,7 +595,7 @@ Para conseguir enviar a mensagem de confirmação depois, o paciente com esse CP
 **Entrada:**
 
 - Query string: `id`.
-- Corpo (JSON), só os campos que mudam: `patient_name`, `patient_cpf`, `doctor_name`, `date`, `time`.
+- Corpo (JSON), só os campos que mudam: `patient_name`, `patient_cpf`, `doctor_cpf` (ou `doctor_name`), `date`, `time`. Para mudar o status, use `PUT /appointments/status` (mais abaixo).
 
 ```json
 { "time": "15:30:00" }
@@ -566,7 +603,7 @@ Para conseguir enviar a mensagem de confirmação depois, o paciente com esse CP
 
 **Saída `200`:** o agendamento atualizado.
 
-**Erros:** `400` nenhum campo enviado · `404` agendamento não encontrado · `409` o médico já tem consulta no novo horário · `422` id ou CPF inválido.
+**Erros:** `400` nenhum campo enviado · `404` agendamento ou médico não encontrado · `409` o médico já tem consulta no novo horário · `422` id ou CPF inválido.
 
 ### `DELETE /appointments/delete` — Excluir agendamento
 
@@ -595,19 +632,24 @@ Não envia nada: devolve um link `wa.me` que abre o WhatsApp (app ou Web) na con
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `id` | texto | — | Id do agendamento |
-| `with_link` | `true`/`false` | `false` | Se `true`, a mensagem leva o link para o próprio paciente confirmar (veja o [fluxo](#fluxo-de-confirmação-de-consulta)) |
+| `with_link` | `true`/`false` | `false` | Se `true`, a mensagem de confirmação leva o link para o próprio paciente confirmar (veja o [fluxo](#fluxo-de-confirmação-de-consulta)). Não tem efeito no lembrete |
+
+A mensagem depende do status da consulta (veja os [modelos](#modelos-de-mensagem)).
 
 **Saída `200`:**
 
 ```json
 {
   "channel": "whatsapp",
+  "template": "confirmacao",
   "to": "5511988887777",
   "url": "https://wa.me/5511988887777?text=Ol%C3%A1%2C%20Maria%20Silva%21..."
 }
 ```
 
-**Erros:** `404` agendamento não encontrado, ou paciente com esse CPF não cadastrado · `422` id inválido.
+`template` diz qual modelo foi usado: `confirmacao` ou `lembrete`.
+
+**Erros:** `404` agendamento não encontrado, ou paciente com esse CPF não cadastrado · `409` consulta concluída, ausente ou cancelada (não há mensagem para enviar) · `422` id inválido.
 
 ### `GET /appointments/notify/email-link` — Mensagem pronta para email
 
@@ -625,26 +667,42 @@ Não envia nada: devolve um link `mailto:` que abre o programa de email do compu
 ```json
 {
   "channel": "email",
+  "template": "confirmacao",
   "to": "maria@example.com",
   "url": "mailto:maria@example.com?subject=Confirme%20sua%20consulta&body=Ol%C3%A1%2C%20Maria..."
 }
 ```
 
-**Erros:** `404` agendamento não encontrado, ou paciente não cadastrado · `422` id inválido.
+**Erros:** `404` agendamento não encontrado, ou paciente não cadastrado · `409` consulta concluída, ausente ou cancelada · `422` id inválido.
 
-**Texto da mensagem** (igual nos dois canais; o email tem o assunto "Confirme sua consulta"):
+#### Modelos de mensagem
 
-Com `with_link=false` (padrão):
+O texto é igual nos dois canais; o que muda é o status da consulta:
+
+| Status | Modelo (`template`) | Assunto do email |
+|---|---|---|
+| `pendente` | `confirmacao` — pede a confirmação | "Confirme sua consulta" |
+| `confirmado` | `lembrete` — lembra a data e o horário | "Lembrete da sua consulta" |
+| `concluido`, `ausente`, `cancelado` | nenhum: a rota responde `409` | — |
+
+Confirmação, com `with_link=false` (padrão):
 
 ```text
 Olá, Maria Silva! Você tem uma consulta marcada com Dr. João Souza no dia 10/11/2026 às 14:00. Responda SIM para confirmar sua presença ou NÃO caso não possa comparecer.
 Atendimento: recepcao (recepcao@clinica.com)
 ```
 
-Com `with_link=true`:
+Confirmação, com `with_link=true`:
 
 ```text
-Olá, Maria Silva! Você tem uma consulta marcada com Dr. João Souza no dia 10/11/2026 às 14:00. Confirme sua presença: https://minha-agenda-znvl.onrender.com/appointments/confirm?id=73&token=...
+Olá, Maria Silva! Você tem uma consulta marcada com Dr. João Souza no dia 10/11/2026 às 14:00. Confirme sua presença: https://minha-agenda-flax-tau.vercel.app/appointments/confirm?id=73&token=...
+Atendimento: recepcao (recepcao@clinica.com)
+```
+
+Lembrete (o `with_link` é ignorado, porque a consulta já está confirmada):
+
+```text
+Olá, Maria Silva! Lembrete: sua consulta com Dr. João Souza é no dia 10/11/2026 às 14:00. Caso não possa comparecer, avise respondendo esta mensagem.
 Atendimento: recepcao (recepcao@clinica.com)
 ```
 
@@ -678,15 +736,38 @@ Usada quando o paciente responde a mensagem: o recepcionista marca (ou desmarca)
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
 | `id` | texto | — | Id do agendamento |
-| `is_checked` | `true`/`false` | `true` | `true` = paciente confirmou; `false` = desmarcar (ex.: respondeu NÃO) |
+| `is_checked` | `true`/`false` | `true` | `true` = status `confirmado`; `false` = volta para `pendente` |
 
-**Saída `200`:** o agendamento com o `is_checked` atualizado.
+**Saída `200`:** o agendamento com o status atualizado.
 
-**Erros:** `404` agendamento não encontrado · `422` id inválido.
+**Erros:** `404` agendamento não encontrado · `409` o horário já foi ocupado por outra consulta (ao reativar uma cancelada) · `422` id inválido.
 
-### `GET /appointments/confirm` — Paciente confirma pelo link
+### `PUT /appointments/status` — Mudar o status da consulta
 
-É a rota do link enviado quando `with_link=true`. O paciente abre no navegador, sem precisar de login.
+Para concluir a consulta, marcar o paciente como ausente, cancelar, ou voltar para pendente/confirmado.
+
+| | |
+|---|---|
+| **URL** | `/appointments/status?id=00073&status=cancelado&reason=Paciente viajou` |
+| **Acesso** | 🔒 Logado |
+
+**Entrada (query string):**
+
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `id` | texto | Id do agendamento |
+| `status` | texto | `pendente`, `confirmado`, `concluido`, `ausente` ou `cancelado` |
+| `reason` | texto (opcional) | Motivo. Só é guardado para `ausente` e `cancelado`; nos outros status o motivo é apagado |
+
+**Saída `200`:** o agendamento com o status atualizado.
+
+**Erros:** `404` agendamento não encontrado · `409` o horário já foi ocupado por outra consulta (ao reativar uma cancelada) · `422` id ou status inválido.
+
+### `GET /appointments/confirm` — Página de confirmação do paciente
+
+É a rota do link enviado quando `with_link=true`. O paciente abre no navegador (celular ou computador), sem precisar de login, e vê uma **página** (HTML, não JSON) com o médico, a data e o horário da consulta e um botão **Confirmar presença**.
+
+**Abrir o link não confirma nada.** Quem confirma é o botão, que chama `POST /appointments/confirm`. Assim a prévia de link que o WhatsApp e os programas de email geram sozinhos não confirma a consulta no lugar do paciente.
 
 | | |
 |---|---|
@@ -700,9 +781,24 @@ Usada quando o paciente responde a mensagem: o recepcionista marca (ou desmarca)
 | `id` | texto | Id do agendamento |
 | `token` | texto | Token secreto do agendamento, já incluído no link gerado pela API |
 
-**Saída `200`:** o agendamento com `is_checked: true`.
+**O que a página mostra:**
 
-**Erros:** `404` link inválido (id e token não batem) · `422` id inválido.
+| Situação | Página | Status HTTP |
+|---|---|---|
+| Consulta pendente | Dados da consulta + botão **Confirmar presença** | `200` |
+| Já confirmada | "Presença confirmada", sem botão | `200` |
+| Cancelada, concluída, ausente ou com a data já passada | "Não é possível confirmar", com o motivo | `409` |
+| id ou token errado | "Link inválido", sem nenhum dado da consulta | `404` |
+
+### `POST /appointments/confirm` — Botão "Confirmar presença"
+
+Recebe o formulário da página acima (`application/x-www-form-urlencoded`, campos `id` e `token`) e confirma a consulta. Devolve a página "Presença confirmada", ou as mesmas páginas de erro do `GET`.
+
+**Segurança do link:**
+
+- A página não mostra o CPF nem o sobrenome do paciente, só o primeiro nome.
+- O token é comparado em tempo constante e só vale para consultas pendentes ou confirmadas até o dia da consulta (horário de Brasília).
+- As páginas vão com `Cache-Control: no-store`, `Referrer-Policy: no-referrer` (o token não vaza para outros sites), `X-Robots-Tag: noindex` e uma `Content-Security-Policy` que bloqueia scripts e impede a página de ser aberta dentro de outro site.
 
 ---
 
@@ -715,12 +811,14 @@ Há duas formas de confirmar; nenhuma tem custo de envio, porque a mensagem sai 
 1. Recepcionista chama `GET /appointments/notify/whatsapp-link?id=...` (ou `email-link`) e abre a `url` devolvida.
 2. Aperta **Enviar** no WhatsApp/email.
 3. O paciente responde "SIM" ou "NÃO".
-4. Recepcionista chama `PUT /appointments/check?id=...` (com `is_checked=false` se a resposta foi "NÃO").
+4. Recepcionista chama `PUT /appointments/check?id=...` se a resposta foi "SIM", ou `PUT /appointments/status?id=...&status=cancelado&reason=...` se foi "NÃO".
 
 **2. Paciente confirma sozinho pelo link**
 
 1. Recepcionista chama `GET /appointments/notify/whatsapp-link?id=...&with_link=true` e envia a mensagem.
-2. O paciente clica no link, que abre `GET /appointments/confirm?id=...&token=...`.
-3. O agendamento fica com `is_checked: true` sem ação do recepcionista.
+2. O paciente clica no link, que abre a página `GET /appointments/confirm?id=...&token=...` com os dados da consulta.
+3. O paciente aperta **Confirmar presença**, e o agendamento fica com `status: "confirmado"` sem ação do recepcionista.
 
-> O link aponta para `APP_BASE_URL`. No plano gratuito do Render o servidor "dorme" sem uso e pode levar alguns segundos para abrir no primeiro acesso — por isso a opção 1 é o padrão.
+Depois da consulta, o recepcionista usa `PUT /appointments/status` com `concluido` ou `ausente`.
+
+> O link aponta para `APP_BASE_URL`, então ele precisa estar configurado na Vercel com o endereço da API (`https://minha-agenda-flax-tau.vercel.app`).

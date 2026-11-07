@@ -46,34 +46,66 @@ def _sender_username(sender_email: str) -> str:
 
 
 REPLY_INSTRUCTION = "Responda SIM para confirmar sua presença ou NÃO caso não possa comparecer."
+REMINDER_INSTRUCTION = "Caso não possa comparecer, avise respondendo esta mensagem."
+
+CONFIRMATION_SUBJECT = "Confirme sua consulta"
+REMINDER_SUBJECT = "Lembrete da sua consulta"
 
 
-def _confirmation_text(appointment, patient, link: str | None, sender_name: str, sender_email: str) -> str:
-    """Sem link, o paciente responde a mensagem e o recepcionista marca a confirmação no sistema."""
-    action = f"Confirme sua presença: {link}" if link else REPLY_INSTRUCTION
-    return (
-        f"Olá, {patient.name}! Você tem uma consulta marcada com {appointment.doctor_name} "
-        f"no dia {appointment.date.strftime('%d/%m/%Y')} às {appointment.time.strftime('%H:%M')}. "
-        f"{action}\n"
-        f"Atendimento: {sender_name} ({sender_email})"
+def _message(id: int, appointment, patient, sender_name: str, sender_email: str, with_link: bool) -> dict:
+    """Escolhe o modelo pelo status: pendente pede confirmação, confirmado recebe lembrete.
+
+    Sem link, o paciente responde a mensagem e o recepcionista marca a confirmação no sistema.
+    O lembrete nunca leva o link, porque a consulta já está confirmada.
+    """
+    quando = f"no dia {appointment.date.strftime('%d/%m/%Y')} às {appointment.time.strftime('%H:%M')}"
+    assinatura = f"Atendimento: {sender_name} ({sender_email})"
+
+    if appointment.status == "pendente":
+        link = _confirmation_link(id) if with_link else None
+        action = f"Confirme sua presença: {link}" if link else REPLY_INSTRUCTION
+        text = (
+            f"Olá, {patient.name}! Você tem uma consulta marcada com {appointment.doctor_name} {quando}. "
+            f"{action}\n{assinatura}"
+        )
+        return {"template": "confirmacao", "subject": CONFIRMATION_SUBJECT, "text": text, "link": link}
+
+    if appointment.status == "confirmado":
+        text = (
+            f"Olá, {patient.name}! Lembrete: sua consulta com {appointment.doctor_name} é {quando}. "
+            f"{REMINDER_INSTRUCTION}\n{assinatura}"
+        )
+        return {"template": "lembrete", "subject": REMINDER_SUBJECT, "text": text, "link": None}
+
+    raise HTTPException(
+        status_code=409,
+        detail=f"Não há mensagem para enviar: a consulta está com status \"{appointment.status}\"",
     )
 
 
 def appointment_confirmation_whatsapp_link(id: int, sender_email: str, with_link: bool = False):
     """Monta um link wa.me com a mensagem pronta; quem envia é o atendente, pelo próprio WhatsApp."""
     appointment, patient = _get_appointment_and_patient(id)
-    link = _confirmation_link(id) if with_link else None
-    message = _confirmation_text(appointment, patient, link, _sender_username(sender_email), sender_email)
+    message = _message(id, appointment, patient, _sender_username(sender_email), sender_email, with_link)
     to_phone = _to_whatsapp_number(patient.tel).lstrip("+")
 
-    return {"channel": "whatsapp", "to": to_phone, "url": f"https://wa.me/{to_phone}?text={quote(message)}"}
+    return {
+        "channel": "whatsapp",
+        "template": message["template"],
+        "to": to_phone,
+        "url": f"https://wa.me/{to_phone}?text={quote(message['text'])}",
+    }
 
 
 def appointment_confirmation_email_link(id: int, sender_email: str, with_link: bool = False):
     """Monta um link mailto: com assunto e corpo prontos; abre o cliente de email do atendente."""
     appointment, patient = _get_appointment_and_patient(id)
-    link = _confirmation_link(id) if with_link else None
-    body = _confirmation_text(appointment, patient, link, _sender_username(sender_email), sender_email)
-    query = urlencode({"subject": "Confirme sua consulta", "body": body}, quote_via=quote)
+    message = _message(id, appointment, patient, _sender_username(sender_email), sender_email, with_link)
+    query = urlencode({"subject": message["subject"], "body": message["text"]}, quote_via=quote)
 
-    return {"channel": "email", "to": patient.email, "url": f"mailto:{patient.email}?{query}"}
+    return {
+        "channel": "email",
+        "template": message["template"],
+        "to": patient.email,
+        "url": f"mailto:{patient.email}?{query}",
+    }

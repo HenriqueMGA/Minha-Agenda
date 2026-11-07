@@ -32,6 +32,7 @@ class PatientUpdate(BaseModel):
 
 
 class PatientResponse(BaseModel):
+    id: str
     cpf: str
     name: str
     email: str

@@ -111,3 +111,57 @@ def test_delete_doctor_forbidden_for_regular_user(client, regular_user, admin, v
 def test_delete_nonexistent_doctor(client, admin, valid_cpf):
     r = client.delete("/doctors/delete", headers=admin["headers"], params={"cpf": valid_cpf()})
     assert r.status_code == 404
+
+
+def test_create_doctor_with_registration_and_status(client, admin, valid_cpf):
+    cpf = valid_cpf()
+    r = client.post("/doctors/create", headers=admin["headers"], json={
+        "name": "Dra Ferias", "cpf": cpf, "email": "d@example.com", "tel": "119",
+        "doctor_specialty": "Odonto", "registration": "CRO-SP 1234", "status": "ferias",
+    })
+    assert r.status_code == 200
+
+    doctor = client.get("/doctors/search", headers=admin["headers"], params={"cpf": cpf}).json()[0]
+    assert doctor["registration"] == "CRO-SP 1234"
+    assert doctor["status"] == "ferias"
+    assert doctor["id"].isdigit() and len(doctor["id"]) >= 5
+
+    del_doctor(cpf)
+
+
+def test_create_doctor_defaults_to_active(client, admin, valid_cpf):
+    cpf = valid_cpf()
+    client.post("/doctors/create", headers=admin["headers"], json={
+        "name": "D", "cpf": cpf, "email": "d@example.com", "tel": "119", "doctor_specialty": "X",
+    })
+
+    doctor = client.get("/doctors/search", headers=admin["headers"], params={"cpf": cpf}).json()[0]
+    assert doctor["status"] == "ativo"
+    assert doctor["registration"] is None
+
+    del_doctor(cpf)
+
+
+def test_create_doctor_invalid_status(client, admin, valid_cpf):
+    r = client.post("/doctors/create", headers=admin["headers"], json={
+        "name": "D", "cpf": valid_cpf(), "email": "d@example.com", "tel": "119",
+        "doctor_specialty": "X", "status": "aposentado",
+    })
+    assert r.status_code == 422
+
+
+def test_update_doctor_status_and_search_by_status(client, admin, valid_cpf):
+    cpf = valid_cpf()
+    client.post("/doctors/create", headers=admin["headers"], json={
+        "name": "D", "cpf": cpf, "email": "d@example.com", "tel": "119", "doctor_specialty": "X",
+    })
+
+    r = client.put("/doctors/update", headers=admin["headers"], params={"cpf": cpf},
+                   json={"status": "inativo", "registration": "CRM 999"})
+    assert r.status_code == 200
+
+    r = client.get("/doctors/search", headers=admin["headers"], params={"status": "inativo"})
+    encontrado = [d for d in r.json() if d["cpf"] == cpf]
+    assert encontrado and encontrado[0]["registration"] == "CRM 999"
+
+    del_doctor(cpf)

@@ -4,6 +4,8 @@ from psycopg2.errors import UniqueViolation
 from src.db.db_conection import get_connection
 from src.models.pacientes import PatientResponse
 
+_COLUMNS = "id, cpf, nome, email, tel, dt_nasc"
+
 
 def create_patients_table():
     with get_connection() as conexao:
@@ -13,27 +15,34 @@ def create_patients_table():
                 CREATE SCHEMA IF NOT EXISTS minhaagenda;
 
                 CREATE TABLE IF NOT EXISTS minhaagenda.patients (
+                    id SERIAL UNIQUE,
                     cpf VARCHAR(11) PRIMARY KEY,
                     nome VARCHAR(255) NOT NULL,
                     email VARCHAR(255) NOT NULL,
                     tel VARCHAR(20) NOT NULL,
                     dt_nasc DATE NOT NULL
                 );
+
+                -- Migração de tabelas criadas antes do id existir
+                ALTER TABLE minhaagenda.patients ADD COLUMN IF NOT EXISTS id SERIAL UNIQUE;
             """
         )
         cursor.close()
 
 
+def _to_response(row):
+    return PatientResponse(
+        id=str(row[0]).zfill(5), cpf=row[1], name=row[2], email=row[3], tel=row[4], dt_nasc=row[5]
+    )
+
+
 def list_patients():
     with get_connection() as conexao:
         cursor = conexao.cursor()
-        cursor.execute('SELECT cpf, nome, email, tel, dt_nasc FROM minhaagenda.patients')
+        cursor.execute(f"SELECT {_COLUMNS} FROM minhaagenda.patients ORDER BY id")
         dados = cursor.fetchall()
         cursor.close()
-        return [
-            PatientResponse(cpf=row[0], name=row[1], email=row[2], tel=row[3], dt_nasc=row[4])
-            for row in dados
-        ]
+        return [_to_response(row) for row in dados]
 
 
 def search_patient(name: str | None = None, email: str | None = None, cpf: str | None = None):
@@ -54,13 +63,10 @@ def search_patient(name: str | None = None, email: str | None = None, cpf: str |
 
     with get_connection() as conexao:
         cursor = conexao.cursor()
-        cursor.execute(f"SELECT cpf, nome, email, tel, dt_nasc FROM minhaagenda.patients WHERE {where}", params)
+        cursor.execute(f"SELECT {_COLUMNS} FROM minhaagenda.patients WHERE {where} ORDER BY id", params)
         dados = cursor.fetchall()
         cursor.close()
-        return [
-            PatientResponse(cpf=row[0], name=row[1], email=row[2], tel=row[3], dt_nasc=row[4])
-            for row in dados
-        ]
+        return [_to_response(row) for row in dados]
 
 
 def create_patient(body):
